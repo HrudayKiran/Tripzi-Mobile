@@ -1,8 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, FlatList, ActivityIndicator, RefreshControl, TouchableOpacity } from 'react-native';
-import { supabase } from '../../src/integrations/supabase/client';
+import { collection, query, where, orderBy, getDocs } from 'firebase/firestore';
+import { db } from '../../src/config/firebase';
 import { useAuth } from '../../src/contexts/AuthContext';
 import { Search, Bell } from 'lucide-react-native';
+import { AdMobBanner } from 'expo-ads-admob';
+import { BANNER_AD_UNIT_ID } from '../../src/lib/ads';
 
 interface Trip {
   id: string;
@@ -21,15 +24,20 @@ export default function HomeScreen() {
 
   const fetchTrips = async () => {
     try {
-      const { data, error } = await supabase
-        .from('trips')
-        .select('*')
-        .eq('status', 'open')
-        .order('created_at', { ascending: false });
+      const tripsRef = collection(db, 'trips');
+      const q = query(
+        tripsRef, 
+        where('status', '==', 'open'),
+        orderBy('created_at', 'desc')
+      );
+      
+      const querySnapshot = await getDocs(q);
+      const tripsData: Trip[] = [];
+      querySnapshot.forEach((doc) => {
+        tripsData.push({ id: doc.id, ...doc.data() } as Trip);
+      });
 
-      if (data) {
-        setTrips(data);
-      }
+      setTrips(tripsData);
     } catch (error) {
       console.error('Error fetching trips:', error);
     } finally {
@@ -78,6 +86,13 @@ export default function HomeScreen() {
         <Search size={20} color="#666" style={styles.searchIcon} />
         <Text style={styles.searchText}>Search trips, people, or places</Text>
       </View>
+
+      <AdMobBanner
+        bannerSize="smartBannerPortrait"
+        adUnitID={BANNER_AD_UNIT_ID}
+        servePersonalizedAds
+        style={styles.bannerAd}
+      />
 
       <FlatList
         data={trips}
@@ -175,5 +190,12 @@ const styles = StyleSheet.create({
   emptyText: {
     fontSize: 16,
     color: '#666',
+  },
+});
+
+const styles_extra = StyleSheet.create({
+  bannerAd: {
+    alignSelf: 'center',
+    marginVertical: 10,
   },
 });

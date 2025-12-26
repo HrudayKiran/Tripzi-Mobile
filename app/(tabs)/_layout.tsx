@@ -1,6 +1,6 @@
 import React from 'react';
 import { Tabs } from 'expo-router';
-import { Home, User } from 'lucide-react-native';
+import { Home, User, Map as MapIcon } from 'lucide-react-native';
 import { useColorScheme } from '@/components/useColorScheme';
 import Colors from '@/constants/Colors';
 
@@ -18,6 +18,13 @@ export default function TabLayout() {
         options={{
           title: 'Home',
           tabBarIcon: ({ color }) => <Home size={24} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="map"
+        options={{
+          title: 'Explore',
+          tabBarIcon: ({ color }) => <MapIcon size={24} color={color} />,
         }}
       />
       <Tabs.Screen

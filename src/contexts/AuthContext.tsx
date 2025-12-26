@@ -1,15 +1,22 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
-import { User, Session } from '@supabase/supabase-js';
-import { supabase } from '../integrations/supabase/client';
+import { 
+  onAuthStateChanged, 
+  User, 
+  signInWithEmailAndPassword, 
+  createUserWithEmailAndPassword, 
+  signOut as firebaseSignOut,
+  sendPasswordResetEmail
+} from 'firebase/auth';
+import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
+import { auth, db } from '../config/firebase';
 import { useRouter } from 'expo-router';
 
 interface AuthContextType {
   user: User | null;
-  session: Session | null;
   profile: Profile | null;
+  loading: boolean;
   signIn: (email: string, password: string) => Promise<{ error: any }>;
   signUp: (email: string, password: string, fullName: string, phoneNumber: string) => Promise<{ error: any }>;
-  signInWithGoogle: () => Promise<{ error: any }>;
   signOut: () => Promise<void>;
   resetPassword: (email: string) => Promise<{ error: any }>;
   updateProfile: (data: Partial<Profile>) => Promise<{ error: any }>;
@@ -30,114 +37,103 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);
-  const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [loading, setLoading] = useState(true);
   const router = useRouter();
 
   const fetchProfile = async (userId: string) => {
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', userId)
-      .single();
-    
-    if (!error && data) {
-      setProfile(data);
+    try {
+      const docRef = doc(db, 'profiles', userId);
+      const docSnap = await getDoc(docRef);
+      
+      if (docSnap.exists()) {
+        setProfile(docSnap.data() as Profile);
+      }
+    } catch (error) {
+      console.error('Error fetching profile:', error);
     }
   };
 
   useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      setSession(session);
-      setUser(session?.user ?? null);
-      
-      if (session?.user) {
-        setTimeout(() => {
-          fetchProfile(session.user.id);
-        }, 0);
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      setUser(user);
+      if (user) {
+        fetchProfile(user.uid);
       } else {
         setProfile(null);
       }
+      setLoading(false);
     });
 
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setUser(session?.user ?? null);
-      if (session?.user) {
-        fetchProfile(session.user.id);
-      }
-    });
-
-    return () => subscription.unsubscribe();
+    return unsubscribe;
   }, []);
 
   const signIn = async (email: string, password: string) => {
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-    
-    if (!error) {
+    try {
+      await signInWithEmailAndPassword(auth, email, password);
       router.replace('/(tabs)');
+      return { error: null };
+    } catch (error: any) {
+      return { error };
     }
-    
-    return { error };
   };
 
   const signUp = async (email: string, password: string, fullName: string, phoneNumber: string) => {
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: {
-          full_name: fullName,
-          phone_number: phoneNumber,
-        }
-      }
-    });
-    
-    if (!error) {
+    try {
+      const { user } = await createUserWithEmailAndPassword(auth, email, password);
+      
+      // Create profile in Firestore
+      const profileData: Profile = {
+        id: user.uid,
+        full_name: fullName,
+        phone_number: phoneNumber,
+        avatar_url: null,
+        bio: null,
+        push_notifications_enabled: true,
+        kyc_status: 'pending'
+      };
+      
+      await setDoc(doc(db, 'profiles', user.uid), profileData);
+      setProfile(profileData);
+      
       router.replace('/(tabs)');
+      return { error: null };
+    } catch (error: any) {
+      return { error };
     }
-    
-    return { error };
-  };
-
-  const signInWithGoogle = async () => {
-    // Google Sign-In requires additional configuration for mobile
-    // For now, we'll return an error or implement it later
-    return { error: { message: 'Google Sign-In not yet implemented for mobile' } };
   };
 
   const signOut = async () => {
-    await supabase.auth.signOut();
+    await firebaseSignOut(auth);
     setProfile(null);
     router.replace('/auth');
   };
 
   const resetPassword = async (email: string) => {
-    const { error } = await supabase.auth.resetPasswordForEmail(email);
-    return { error };
+    try {
+      await sendPasswordResetEmail(auth, email);
+      return { error: null };
+    } catch (error: any) {
+      return { error };
+    }
   };
 
   const updateProfile = async (data: Partial<Profile>) => {
     if (!user) return { error: { message: 'Not authenticated' } };
     
-    const { error } = await supabase
-      .from('profiles')
-      .update(data)
-      .eq('id', user.id);
-    
-    if (!error) {
-      await fetchProfile(user.id);
+    try {
+      const docRef = doc(db, 'profiles', user.uid);
+      await updateDoc(docRef, data);
+      await fetchProfile(user.uid);
+      return { error: null };
+    } catch (error: any) {
+      return { error };
     }
-    
-    return { error };
   };
 
   const refreshProfile = async () => {
     if (user) {
-      await fetchProfile(user.id);
+      await fetchProfile(user.uid);
     }
   };
 
@@ -145,11 +141,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     <AuthContext.Provider
       value={{
         user,
-        session,
         profile,
+        loading,
         signIn,
         signUp,
-        signInWithGoogle,
         signOut,
         resetPassword,
         updateProfile,
